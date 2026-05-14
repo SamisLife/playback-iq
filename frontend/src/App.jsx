@@ -1,20 +1,23 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Pitch from './components/Pitch.jsx';
 import Timeline from './components/Timeline.jsx';
-import KeyEventPopup from './components/KeyEventPopup.jsx';
+import EventOverlay from './components/EventOverlay.jsx';
+import AgentPanel from './components/AgentPanel.jsx';
 
-const SPEEDS       = [1500, 750];       // ms per minute: ×1 and ×2
+const SPEEDS       = [1500, 750];
 const SPEED_LABELS = ['×1', '×2'];
 
 export default function App() {
-  const [currentMinute, setCurrentMinute] = useState(0);
-  const [tlData, setTlData]               = useState([]);
-  const [keyEvents, setKeyEvents]         = useState([]);
-  const [goals, setGoals]                 = useState([]);
-  const [lineupsByName, setLineupsByName] = useState({});
-  const [playing, setPlaying]             = useState(false);
-  const [speedIdx, setSpeedIdx]           = useState(0);
-  const [activeKeyEvent, setActiveKeyEvent] = useState(null);
+  const [currentMinute,  setCurrentMinute]  = useState(0);
+  const [tlData,         setTlData]         = useState([]);
+  const [keyEvents,      setKeyEvents]      = useState([]);
+  const [goals,          setGoals]          = useState([]);
+  const [lineupsByName,  setLineupsByName]  = useState({});
+  const [playing,        setPlaying]        = useState(false);
+  const [speedIdx,       setSpeedIdx]       = useState(0);
+  const [activeOverlay,  setActiveOverlay]  = useState(null);   // cinematic overlay event
+  const [agentEvent,     setAgentEvent]     = useState(null);   // agent panel event
+
   const playIntervalRef = useRef(null);
   const prevMinuteRef   = useRef(-1);
   const seenEventsRef   = useRef(new Set());
@@ -26,19 +29,12 @@ export default function App() {
         fetch('/api/key-events'),
         fetch('/api/lineups'),
       ]);
-      const [timeline, keys, lineups] = await Promise.all([
-        r1.json(), r2.json(), r3.json(),
-      ]);
+      const [timeline, keys, lineups] = await Promise.all([r1.json(), r2.json(), r3.json()]);
 
       setTlData(timeline);
       setKeyEvents(keys);
-      setGoals(
-        keys
-          .filter(e => e.shot_outcome === 'Goal')
-          .map(e => ({ team: e.team, minute: e.minute ?? 0 }))
-      );
+      setGoals(keys.filter(e => e.shot_outcome === 'Goal').map(e => ({ team: e.team, minute: e.minute ?? 0 })));
 
-      // Build name → { jersey, position, team } lookup from both team lineups
       const byName = {};
       for (const [team, players] of Object.entries(lineups)) {
         for (const p of players) {
@@ -50,7 +46,7 @@ export default function App() {
     fetchInit().catch(console.error);
   }, []);
 
-  // ── Playback interval ────────────────────────────────────────────────
+  // ── Playback interval ─────────────────────────────────────────────────────
   useEffect(() => {
     clearInterval(playIntervalRef.current);
     if (!playing) return;
@@ -63,21 +59,22 @@ export default function App() {
     return () => clearInterval(playIntervalRef.current);
   }, [playing, speedIdx]);
 
-  // ── Detect notable shot events during playback ───────────────────────────
+  // ── Detect notable events during forward playback ─────────────────────────
   useEffect(() => {
     const prev = prevMinuteRef.current;
     prevMinuteRef.current = currentMinute;
-    // Only trigger during forward-playing (one step at a time), not scrubbing/jumping
     if (!playing || currentMinute - prev !== 1) return;
-    const notable = keyEvents.find(
-      e => (e.minute ?? 0) === currentMinute
-        && e.type === 'Shot'
-        && !seenEventsRef.current.has(e.event_id)
-    );
+
+    const notable = keyEvents.find(e => {
+      if ((e.minute ?? 0) !== currentMinute) return false;
+      if (seenEventsRef.current.has(e.event_id)) return false;
+      return e.type === 'Shot' || (e.type === 'Foul Committed' && e.foul_committed_card);
+    });
+
     if (notable) {
       seenEventsRef.current.add(notable.event_id);
       setPlaying(false);
-      setActiveKeyEvent(notable);
+      setActiveOverlay(notable);
     }
   }, [currentMinute, playing, keyEvents]);
 
@@ -86,9 +83,8 @@ export default function App() {
     setCurrentMinute(m);
   }, []);
 
-  const onPlayPause = useCallback(() => setPlaying(p => !p), []);
-
-  const onToggleSpeed = useCallback(() => setSpeedIdx(i => (i + 1) % SPEEDS.length), []);
+  const onPlayPause    = useCallback(() => setPlaying(p => !p), []);
+  const onToggleSpeed  = useCallback(() => setSpeedIdx(i => (i + 1) % SPEEDS.length), []);
 
   const onNextHotMoment = useCallback(() => {
     if (!keyEvents.length) return;
@@ -103,16 +99,23 @@ export default function App() {
     if (prev) { setCurrentMinute(prev.minute ?? 0); setPlaying(false); }
   }, [keyEvents, currentMinute]);
 
+  const handleMarkerClick = useCallback((ev) => {
+    setAgentEvent(prev => prev?.event_id === ev.event_id ? null : ev);
+  }, []);
+
   const morScore = goals.filter(g => g.team === 'Morocco'  && g.minute <= currentMinute).length;
   const porScore = goals.filter(g => g.team === 'Portugal' && g.minute <= currentMinute).length;
 
   return (
     <div id="app">
-      {activeKeyEvent && (
-        <KeyEventPopup
-          event={activeKeyEvent}
-          onDismiss={() => setActiveKeyEvent(null)}
-        />
+      {/* Cinematic event overlay — auto-triggered during playback */}
+      {activeOverlay && (
+        <EventOverlay event={activeOverlay} onDismiss={() => setActiveOverlay(null)} />
+      )}
+
+      {/* AI agent panel — opened by clicking a timeline marker */}
+      {agentEvent && (
+        <AgentPanel event={agentEvent} onClose={() => setAgentEvent(null)} />
       )}
 
       <div id="main">
@@ -141,6 +144,7 @@ export default function App() {
         onToggleSpeed={onToggleSpeed}
         onNextHotMoment={onNextHotMoment}
         onPrevHotMoment={onPrevHotMoment}
+        onMarkerClick={handleMarkerClick}
       />
     </div>
   );

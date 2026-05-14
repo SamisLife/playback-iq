@@ -38,6 +38,7 @@ function MarkerIcon({ ev }) {
 export default function Timeline({
   tlData, keyEvents, currentMinute, onMinuteChange,
   playing, speedLabel, onPlayPause, onToggleSpeed, onNextHotMoment, onPrevHotMoment,
+  onMarkerClick,
 }) {
   const canvasRef = useRef(null);
   const wrapRef   = useRef(null);
@@ -175,14 +176,16 @@ export default function Timeline({
         <div id="tl-markers">
           {keyEvents.map(ev => {
             const pct = (Math.min(ev.minute ?? 0, 95) / 95) * 100;
+            const isClickable = ev.type === 'Shot' || (ev.type === 'Foul Committed' && ev.foul_committed_card);
             return (
               <div
                 key={ev.event_id}
-                className="mk"
+                className={`mk${isClickable ? ' mk--clickable' : ''}`}
                 style={{ left: `${pct}%` }}
                 onMouseEnter={e => showTip(e, ev.description)}
                 onMouseMove={moveTip}
                 onMouseLeave={hideTip}
+                onClick={isClickable ? (e) => { e.stopPropagation(); hideTip(); onMarkerClick?.(ev); } : undefined}
               >
                 <MarkerIcon ev={ev} />
                 <div className="mk-stem" />
