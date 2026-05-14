@@ -101,19 +101,35 @@ class MatchData:
         other_team = next((t for t in teams if t != actor_team), None)
 
         # shot_freeze_frame carries player identities; prefer it over 360 data
+        actor_name = event.get("player")
+        actor_loc  = event.get("location") or []
+        actor_pid  = event.get("player_id")
+
         sfp = event.get("shot_freeze_frame")
         if sfp:
             result = []
             for p in sfp:
                 loc = p.get("location") or []
-                pi = p.get("player") or {}
+                pi  = p.get("player") or {}
                 result.append({
-                    "player_id": pi.get("id"),
+                    "player_id":   pi.get("id"),
                     "player_name": pi.get("name"),
-                    "team": actor_team if p.get("teammate") else other_team,
+                    "team":        actor_team if p.get("teammate") else other_team,
                     "is_teammate": bool(p.get("teammate")),
-                    "location_x": loc[0] if loc else None,
-                    "location_y": loc[1] if len(loc) > 1 else None,
+                    "is_actor":    False,
+                    "location_x":  loc[0] if loc else None,
+                    "location_y":  loc[1] if len(loc) > 1 else None,
+                })
+            # StatsBomb shot_freeze_frame omits the shooter — inject them at the end
+            if actor_name and not any(r["player_name"] == actor_name for r in result):
+                result.append({
+                    "player_id":   actor_pid,
+                    "player_name": actor_name,
+                    "team":        actor_team,
+                    "is_teammate": True,
+                    "is_actor":    True,
+                    "location_x":  actor_loc[0] if actor_loc else None,
+                    "location_y":  actor_loc[1] if len(actor_loc) > 1 else None,
                 })
             return result
 
@@ -124,16 +140,17 @@ class MatchData:
 
         result = []
         for p in frame["freeze_frame"]:
-            loc = p.get("location") or []
-            is_actor = p.get("actor", False)
+            loc        = p.get("location") or []
+            is_actor   = bool(p.get("actor", False))
             is_teammate = p.get("teammate", False)
             result.append({
-                "player_id": None,
-                "player_name": event.get("player") if is_actor else None,
-                "team": actor_team if (is_teammate or is_actor) else other_team,
+                "player_id":   None,
+                "player_name": actor_name if is_actor else None,
+                "team":        actor_team if (is_teammate or is_actor) else other_team,
                 "is_teammate": is_teammate or is_actor,
-                "location_x": loc[0] if loc else None,
-                "location_y": loc[1] if len(loc) > 1 else None,
+                "is_actor":    is_actor,
+                "location_x":  loc[0] if loc else None,
+                "location_y":  loc[1] if len(loc) > 1 else None,
             })
         return result
 

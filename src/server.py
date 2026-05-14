@@ -274,8 +274,17 @@ Be specific. Reference player names, positions, and pitch zones."""
     return StreamingResponse(stream_response(), media_type="text/plain")
 
 
-# ─── Frontend ─────────────────────────────────────────────────────────────────
+# ─── Frontend (serves built React app from frontend/dist/) ───────────────────
+
+_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
 @app.get("/")
 def index():
-    return FileResponse(Path(__file__).parent.parent / "index.html")
+    return FileResponse(_DIST / "index.html")
+
+@app.get("/{full_path:path}")
+def spa_fallback(full_path: str):
+    candidate = _DIST / full_path
+    if candidate.is_file():
+        return FileResponse(candidate)
+    return FileResponse(_DIST / "index.html")

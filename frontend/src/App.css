@@ -1,0 +1,292 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --amber:    #FF9900;
+  --amber-40: rgba(255,153,0,0.40);
+  --amber-10: rgba(255,153,0,0.10);
+  --bg:       #07070E;
+  --panel:    #0B0B13;
+  --fg:       #DFE0EC;
+  --muted:    rgba(210,210,230,0.28);
+  --marker-h: 40px;
+  --canvas-h: 108px;
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  overflow: hidden;
+}
+
+/* ── Shell ── */
+#app { height: 100%; display: flex; flex-direction: column; }
+
+/* ── Pitch area ── */
+#main {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+}
+
+#pitch-container {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#pitch-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: pointer;
+}
+
+/* ── Score / HUD overlays ── */
+#hud-top {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+#match-teams { display: flex; align-items: center; gap: 18px; }
+
+.team-name {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(210,210,230,0.45);
+  width: 90px;
+}
+.team-name.home { text-align: right; }
+.team-name.away { text-align: left; }
+
+#score-display {
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', monospace;
+  color: var(--amber);
+  line-height: 1;
+}
+
+#match-meta {
+  font-size: 9px;
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  color: rgba(210,210,230,0.22);
+}
+
+/* ── Selected player panel ── */
+#player-info {
+  position: absolute;
+  bottom: 12px;
+  left: 16px;
+  z-index: 10;
+  background: rgba(7,7,14,0.88);
+  border: 1px solid rgba(255,153,0,0.20);
+  border-radius: 4px;
+  padding: 7px 14px;
+  pointer-events: none;
+}
+
+#pi-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg);
+  letter-spacing: 0.02em;
+}
+
+#pi-meta {
+  font-size: 10px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* ── Timeline panel ── */
+#bottom {
+  flex-shrink: 0;
+  background: var(--panel);
+  border-top: 1px solid var(--amber-10);
+  padding: 11px 22px 17px;
+}
+
+#tl-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+#now-row { display: flex; align-items: baseline; gap: 2px; line-height: 1; }
+
+#now-min {
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--amber);
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  letter-spacing: -0.03em;
+  min-width: 2ch;
+}
+
+#now-apos { font-size: 17px; font-weight: 300; color: var(--amber-40); }
+
+#tl-track-label {
+  font-size: 8px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgba(210,210,230,0.16);
+}
+
+/* ── Timeline track ── */
+#tl-wrap {
+  position: relative;
+  width: 100%;
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#tl-markers { position: relative; height: var(--marker-h); overflow: visible; }
+
+.mk {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: pointer;
+  z-index: 10;
+}
+
+.mk-stem { width: 1px; height: 8px; background: rgba(255,255,255,0.07); }
+
+#tl-canvas { display: block; width: 100%; height: var(--canvas-h); border-radius: 2px; }
+
+#scrubber {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: calc(var(--marker-h) + var(--canvas-h));
+  background: rgba(255,188,28,0.88);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 20;
+  will-change: left;
+}
+
+#scrubber::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left:  5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top:   8px solid rgba(255,190,32,0.96);
+}
+
+/* ── Playback controls ── */
+#tl-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ctrl-btn {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.09);
+  color: var(--fg);
+  border-radius: 3px;
+  padding: 4px 9px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  transition: background 0.12s, border-color 0.12s;
+  user-select: none;
+}
+
+.ctrl-btn:hover { background: rgba(255,255,255,0.10); }
+
+.ctrl-btn.play-btn {
+  background: rgba(255,153,0,0.10);
+  border-color: rgba(255,153,0,0.22);
+  color: var(--amber);
+  padding: 4px 16px;
+  font-size: 14px;
+}
+
+.ctrl-btn.play-btn:hover,
+.ctrl-btn.play-btn.active { background: rgba(255,153,0,0.20); border-color: rgba(255,153,0,0.40); }
+
+.ctrl-btn.speed-btn {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  padding: 4px 8px;
+  color: var(--muted);
+}
+
+/* ── Player hover tooltip ── */
+.player-tooltip {
+  position: fixed;
+  z-index: 300;
+  pointer-events: none;
+  background: rgba(7,7,14,0.96);
+  border: 1px solid rgba(255,153,0,0.28);
+  border-radius: 4px;
+  padding: 7px 13px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.7);
+  min-width: 140px;
+}
+
+.pt-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fg);
+  letter-spacing: 0.01em;
+}
+
+.pt-detail {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* ── Tooltip ── */
+.tip {
+  position: fixed;
+  z-index: 200;
+  pointer-events: none;
+  background: rgba(7,7,14,0.97);
+  border: 1px solid rgba(255,153,0,0.22);
+  color: var(--fg);
+  font-size: 11px;
+  line-height: 1.55;
+  letter-spacing: 0.01em;
+  padding: 6px 12px;
+  border-radius: 3px;
+  max-width: 290px;
+  white-space: normal;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.75);
+}
