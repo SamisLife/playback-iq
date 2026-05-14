@@ -10,9 +10,10 @@ truststore.inject_into_ssl()  # uses the OS certificate store; fixes Python 3.14
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types as genai_types
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 load_dotenv()
@@ -271,3 +272,10 @@ Be specific. Reference player names, positions, and pitch zones."""
                 yield chunk.text
 
     return StreamingResponse(stream_response(), media_type="text/plain")
+
+
+# ─── Frontend ─────────────────────────────────────────────────────────────────
+
+@app.get("/")
+def index():
+    return FileResponse(Path(__file__).parent.parent / "index.html")

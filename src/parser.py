@@ -80,6 +80,10 @@ class MatchData:
                 "pass_length": e.get("pass_length"),
                 "is_key_pass": bool(e.get("pass_shot_assist") or e.get("pass_goal_assist")),
                 "is_goal_assist": bool(e.get("pass_goal_assist")),
+                # Card / foul
+                "foul_committed_card": e.get("foul_committed_card"),
+                # Substitution
+                "substitution_replacement": e.get("substitution_replacement"),
                 # Other
                 "under_pressure": e.get("under_pressure"),
                 "play_pattern": e.get("play_pattern"),
@@ -135,14 +139,28 @@ class MatchData:
 
     def get_timeline_data(self):
         self._require_loaded()
-        buckets = {m: {"raw_score": 0.0, "events_in_minute": []} for m in range(96)}
+        buckets = {
+            m: {"raw_score": 0.0, "events_in_minute": [], "quality_multiplier": 1.0}
+            for m in range(96)
+        }
 
         for e in self._events:
             minute = min(int(e.get("minute") or 0), 95)
             etype = e.get("type", "")
 
             if etype == "Shot":
-                weight = _GOAL_WEIGHT if e.get("shot_outcome") == "Goal" else _SHOT_WEIGHT
+                outcome = e.get("shot_outcome", "")
+                weight = _GOAL_WEIGHT if outcome == "Goal" else _SHOT_WEIGHT
+                # Quality multiplier: best shot quality in this minute wins
+                if outcome == "Goal":
+                    multiplier = 2.5
+                elif outcome in ("Saved", "Saved To Post"):
+                    multiplier = 1.5
+                else:  # Off T, Blocked, Post, Wayward
+                    multiplier = 1.2
+                buckets[minute]["quality_multiplier"] = max(
+                    buckets[minute]["quality_multiplier"], multiplier
+                )
             elif etype == "Pass" and (e.get("pass_shot_assist") or e.get("pass_goal_assist")):
                 weight = _KEY_PASS_WEIGHT
             else:
@@ -150,6 +168,10 @@ class MatchData:
 
             buckets[minute]["raw_score"] += weight
             buckets[minute]["events_in_minute"].append(etype)
+
+        # Apply quality multiplier then normalize
+        for b in buckets.values():
+            b["raw_score"] *= b["quality_multiplier"]
 
         max_score = max(b["raw_score"] for b in buckets.values()) or 1.0
 
