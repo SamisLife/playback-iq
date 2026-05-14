@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Pitch from './components/Pitch.jsx';
 import Timeline from './components/Timeline.jsx';
+import KeyEventPopup from './components/KeyEventPopup.jsx';
 
 const SPEEDS       = [1500, 750];       // ms per minute: ×1 and ×2
 const SPEED_LABELS = ['×1', '×2'];
@@ -13,7 +14,10 @@ export default function App() {
   const [lineupsByName, setLineupsByName] = useState({});
   const [playing, setPlaying]             = useState(false);
   const [speedIdx, setSpeedIdx]           = useState(0);
-  const playIntervalRef                   = useRef(null);
+  const [activeKeyEvent, setActiveKeyEvent] = useState(null);
+  const playIntervalRef = useRef(null);
+  const prevMinuteRef   = useRef(-1);
+  const seenEventsRef   = useRef(new Set());
 
   useEffect(() => {
     async function fetchInit() {
@@ -59,6 +63,24 @@ export default function App() {
     return () => clearInterval(playIntervalRef.current);
   }, [playing, speedIdx]);
 
+  // ── Detect notable shot events during playback ───────────────────────────
+  useEffect(() => {
+    const prev = prevMinuteRef.current;
+    prevMinuteRef.current = currentMinute;
+    // Only trigger during forward-playing (one step at a time), not scrubbing/jumping
+    if (!playing || currentMinute - prev !== 1) return;
+    const notable = keyEvents.find(
+      e => (e.minute ?? 0) === currentMinute
+        && e.type === 'Shot'
+        && !seenEventsRef.current.has(e.event_id)
+    );
+    if (notable) {
+      seenEventsRef.current.add(notable.event_id);
+      setPlaying(false);
+      setActiveKeyEvent(notable);
+    }
+  }, [currentMinute, playing, keyEvents]);
+
   const handleManualScrub = useCallback((m) => {
     setPlaying(false);
     setCurrentMinute(m);
@@ -86,6 +108,13 @@ export default function App() {
 
   return (
     <div id="app">
+      {activeKeyEvent && (
+        <KeyEventPopup
+          event={activeKeyEvent}
+          onDismiss={() => setActiveKeyEvent(null)}
+        />
+      )}
+
       <div id="main">
         <Pitch currentMinute={currentMinute} lineupsByName={lineupsByName} />
 

@@ -274,6 +274,210 @@ Be specific. Reference player names, positions, and pitch zones."""
     return StreamingResponse(stream_response(), media_type="text/plain")
 
 
+# ─── AI explain (agentic with function calling) ───────────────────────────────
+
+_AGENT_TOOLS = genai_types.Tool(function_declarations=[
+    genai_types.FunctionDeclaration(
+        name="get_events_in_window",
+        description="Get all significant match events between two minutes to understand the build-up or aftermath.",
+        parameters=genai_types.Schema(
+            type=genai_types.Type.OBJECT,
+            properties={
+                "minute_from": genai_types.Schema(type=genai_types.Type.INTEGER, description="Start minute (inclusive)"),
+                "minute_to":   genai_types.Schema(type=genai_types.Type.INTEGER, description="End minute (inclusive)"),
+            },
+            required=["minute_from", "minute_to"],
+        ),
+    ),
+    genai_types.FunctionDeclaration(
+        name="get_passing_sequence",
+        description="Get the sequence of passes in a time window to trace ball circulation and build-up patterns.",
+        parameters=genai_types.Schema(
+            type=genai_types.Type.OBJECT,
+            properties={
+                "minute_from": genai_types.Schema(type=genai_types.Type.INTEGER, description="Start minute"),
+                "minute_to":   genai_types.Schema(type=genai_types.Type.INTEGER, description="End minute"),
+            },
+            required=["minute_from", "minute_to"],
+        ),
+    ),
+    genai_types.FunctionDeclaration(
+        name="get_player_positions",
+        description="Get player positions (freeze frame) at the moment of a specific event.",
+        parameters=genai_types.Schema(
+            type=genai_types.Type.OBJECT,
+            properties={
+                "event_id": genai_types.Schema(type=genai_types.Type.STRING, description="The event UUID"),
+            },
+            required=["event_id"],
+        ),
+    ),
+    genai_types.FunctionDeclaration(
+        name="get_pressure_events",
+        description="Get pressure, duel, and tackle events in a time window — reveals defensive intensity.",
+        parameters=genai_types.Schema(
+            type=genai_types.Type.OBJECT,
+            properties={
+                "minute_from": genai_types.Schema(type=genai_types.Type.INTEGER, description="Start minute"),
+                "minute_to":   genai_types.Schema(type=genai_types.Type.INTEGER, description="End minute"),
+            },
+            required=["minute_from", "minute_to"],
+        ),
+    ),
+])
+
+_STEP_LABELS = {
+    "get_events_in_window": "Scanning event timeline",
+    "get_passing_sequence": "Tracing passing sequence",
+    "get_player_positions": "Reading player positions",
+    "get_pressure_events":  "Analysing defensive pressure",
+}
+
+
+@app.post("/api/explain-agent")
+async def explain_agent(body: ExplainBody):
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not set")
+
+    all_events = _md.get_events()
+    event = next((e for e in all_events if e["event_id"] == body.event_id), None)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    minute = event["minute"] or 0
+    goals_before = {
+        team: sum(
+            1 for e in all_events
+            if e["type"] == "Shot" and e.get("shot_outcome") == "Goal"
+            and e["team"] == team and (e["minute"] or 0) < minute
+        )
+        for team in ["Morocco", "Portugal"]
+    }
+    score_str = f"Morocco {goals_before['Morocco']} – {goals_before['Portugal']} Portugal"
+
+    _noise = {"Ball Receipt*", "Carry", "Starting XI", "Half Start", "Half End"}
+
+    def _exec_tool(name: str, args: dict) -> dict:
+        if name == "get_events_in_window":
+            mf, mt = int(args["minute_from"]), int(args["minute_to"])
+            evs = [e for e in all_events if mf <= (e["minute"] or 0) <= mt and e["type"] not in _noise]
+            return {"events": [
+                {"minute": e["minute"], "second": e["second"], "type": e["type"],
+                 "player": e["player"], "team": e["team"],
+                 "outcome": e.get("shot_outcome") or e.get("pass_outcome") or ""}
+                for e in evs[:30]
+            ]}
+        if name == "get_passing_sequence":
+            mf, mt = int(args["minute_from"]), int(args["minute_to"])
+            passes = [e for e in all_events if e["type"] == "Pass" and mf <= (e["minute"] or 0) <= mt]
+            return {"passes": [
+                {"minute": e["minute"], "second": e["second"], "player": e["player"],
+                 "team": e["team"], "length_m": round(e.get("pass_length") or 0, 1),
+                 "outcome": e.get("pass_outcome") or "Complete",
+                 "is_key_pass": bool(e.get("is_key_pass"))}
+                for e in passes[:25]
+            ]}
+        if name == "get_player_positions":
+            ff = _md.get_freeze_frame(str(args["event_id"]))
+            return {"players": [
+                {"name": p["player_name"], "team": p["team"],
+                 "x": round(p["location_x"] or 0, 1), "y": round(p["location_y"] or 0, 1),
+                 "is_actor": p["is_actor"]}
+                for p in ff if p["location_x"] is not None
+            ][:22]}
+        if name == "get_pressure_events":
+            mf, mt = int(args["minute_from"]), int(args["minute_to"])
+            evs = [e for e in all_events
+                   if e["type"] in ("Pressure", "Duel", "Tackle", "Interception")
+                   and mf <= (e["minute"] or 0) <= mt]
+            return {"events": [
+                {"minute": e["minute"], "type": e["type"],
+                 "player": e["player"], "team": e["team"]}
+                for e in evs[:20]
+            ]}
+        return {"error": f"Unknown tool: {name}"}
+
+    system_prompt = f"""You are a tactical football analyst providing live commentary for an interactive replay of the 2022 FIFA World Cup quarter-final: Morocco vs Portugal.
+
+MATCH STATE at {minute}' (period {event.get('period', '?')}):
+Score: {score_str}
+
+FOCAL EVENT:
+  Type      : {event['type']}
+  Outcome   : {event.get('shot_outcome') or 'N/A'}
+  Player    : {event['player']} ({event['team']})
+  Location  : x={event['location_x']}, y={event['location_y']}  (StatsBomb: x 0→120 left→right, y 0→80)
+  xG        : {event.get('shot_xg') or 'N/A'}
+  Technique : {event.get('shot_technique') or 'N/A'}
+  Body part : {event.get('shot_body_part') or 'N/A'}
+  Under pressure: {event.get('under_pressure') or False}
+  Play pattern: {event.get('play_pattern') or 'N/A'}
+
+Use the tools to investigate this moment:
+1. get_events_in_window to see the build-up (e.g., minutes {minute-3}–{minute})
+2. get_player_positions for the freeze frame shape
+3. get_passing_sequence to trace how the attack developed
+4. Optionally get_pressure_events if you need defensive details
+
+Then write a concise 3–4 sentence tactical analysis. Be specific: name players, reference pitch zones, cite actual data from the tools. Reference timestamps like "in the {minute-1}th minute" or "from the 40:22 build-up pass"."""
+
+    client = genai.Client(api_key=api_key)
+    config_tools = genai_types.GenerateContentConfig(
+        tools=[_AGENT_TOOLS],
+        thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+    )
+    config_final = genai_types.GenerateContentConfig(
+        thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+        max_output_tokens=600,
+    )
+
+    async def stream_agent():
+        contents = [
+            genai_types.Content(role="user", parts=[genai_types.Part.from_text(text=system_prompt)])
+        ]
+
+        for _ in range(5):
+            resp = await client.aio.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=contents,
+                config=config_tools,
+            )
+
+            fn_parts = [p for p in resp.candidates[0].content.parts if p.function_call]
+            if not fn_parts:
+                break
+
+            contents.append(resp.candidates[0].content)
+
+            response_parts = []
+            for part in fn_parts:
+                fc = part.function_call
+                label = _STEP_LABELS.get(fc.name, fc.name.replace("_", " ").title())
+                yield f"[STEP] {label}\n"
+                result = _exec_tool(fc.name, dict(fc.args))
+                response_parts.append(
+                    genai_types.Part(function_response=genai_types.FunctionResponse(
+                        name=fc.name, response=result
+                    ))
+                )
+
+            contents.append(genai_types.Content(role="user", parts=response_parts))
+
+        yield "[DONE]\n"
+
+        streaming = await client.aio.models.generate_content_stream(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config=config_final,
+        )
+        async for chunk in streaming:
+            if chunk.text:
+                yield chunk.text
+
+    return StreamingResponse(stream_agent(), media_type="text/plain")
+
+
 # ─── Frontend (serves built React app from frontend/dist/) ───────────────────
 
 _DIST = Path(__file__).parent.parent / "frontend" / "dist"
